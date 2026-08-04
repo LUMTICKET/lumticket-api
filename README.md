@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lumticket — Phase One Backend
 
-## Getting Started
+Next.js (App Router) + PostgreSQL/Prisma backend for **Lumticket**: Bus
+Ticketing, Parcel Logistics, and Event Ticketing, as specified in the
+project SRS. This repo currently implements the API layer, data model,
+auth/RBAC, and seat/booking/validation business logic — not the Customer
+App or dashboard UIs (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+scope).
 
-First, run the development server:
+## Stack
+
+| Layer | Choice | Why |
+|---|---|---|
+| Framework | Next.js 16 (App Router, TypeScript) | Matches SRS TECH-02 ("Backend: Next.js") |
+| Database | PostgreSQL (Neon) | Matches SRS TECH-03 |
+| ORM | Prisma 7 (`prisma-client` generator + `@prisma/adapter-pg`) | Type-safe queries, migrations |
+| Auth | Auth.js / NextAuth v5, Credentials + JWT | Session carries `role` + `tenantId` for RBAC |
+| Validation | Zod | Request body validation on every route |
+| Styling | Tailwind CSS v4 | Brand tokens wired in `src/app/globals.css` |
+| Tests | Vitest | Unit tests for pure business logic |
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
+cp .env.example .env      # fill in DATABASE_URL / DIRECT_URL / AUTH_SECRET
+npm run db:migrate        # create tables in your Postgres database
+npm run db:seed           # sample tenants, users, a trip, an event
+npm run dev                # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+See [docs/SETUP.md](docs/SETUP.md) for the full Neon setup walkthrough, and
+[docs/TESTING.md](docs/TESTING.md) for how to exercise every endpoint.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Documentation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — system shape, what's built vs. deferred, key design decisions
+- [docs/DATA_MODEL.md](docs/DATA_MODEL.md) — Prisma schema walkthrough, mapped back to SRS Section 5
+- [docs/API.md](docs/API.md) — every endpoint, request/response shape, required role, and the FR/UC it satisfies
+- [docs/RBAC.md](docs/RBAC.md) — role list and what each can access
+- [docs/SETUP.md](docs/SETUP.md) — Neon/Supabase/local Postgres setup, environment variables, migrations
+- [docs/TESTING.md](docs/TESTING.md) — unit tests + a full manual curl/Postman walkthrough of the booking and KYC flows
 
-## Learn More
+## Project layout
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+prisma/schema.prisma        Data model (Section 5 of the SRS)
+prisma/seed.ts               Sample data for local development
+src/lib/                     Prisma client, auth, RBAC, idempotency, ticket codes, etc.
+src/app/api/                 REST endpoints (App Router route handlers)
+src/generated/prisma/        Generated Prisma Client (gitignored, regenerate with `npm run db:generate`)
+tests/                       Vitest unit tests
+```

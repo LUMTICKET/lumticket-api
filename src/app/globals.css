@@ -1,8 +1,28 @@
 @import "tailwindcss";
 
+/*
+ * Brand tokens from Brand Direction 24.pdf — Deep Navy Blue / White / Light
+ * Grey / Dark Grey neutrals, Green (success), Orange (highlights), Red
+ * (errors). Default Tailwind spacing (4px steps) already lines up with the
+ * brand's 8pt grid (8/16/24/32/48 = spacing-2/4/6/8/12), so it is used as-is
+ * rather than overridden.
+ */
 :root {
   --background: #ffffff;
   --foreground: #171717;
+
+  --color-brand-navy: #0b2545;
+  --color-brand-navy-hover: #0f3562;
+  --color-brand-white: #ffffff;
+  --color-brand-grey-light: #f2f4f7;
+  --color-brand-grey-dark: #4b5563;
+  --color-brand-success: #16a34a;
+  --color-brand-highlight: #f97316;
+  --color-brand-error: #dc2626;
+
+  --radius-card: 12px;
+  --radius-button: 10px;
+  --radius-input: 8px;
 }
 
 @theme inline {
@@ -10,17 +30,32 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-brand-navy: var(--color-brand-navy);
+  --color-brand-navy-hover: var(--color-brand-navy-hover);
+  --color-brand-white: var(--color-brand-white);
+  --color-brand-grey-light: var(--color-brand-grey-light);
+  --color-brand-grey-dark: var(--color-brand-grey-dark);
+  --color-brand-success: var(--color-brand-success);
+  --color-brand-highlight: var(--color-brand-highlight);
+  --color-brand-error: var(--color-brand-error);
+
+  --radius-card: var(--radius-card);
+  --radius-button: var(--radius-button);
+  --radius-input: var(--radius-input);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --color-brand-grey-light: #1f2937;
+    --color-brand-grey-dark: #9ca3af;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }

@@ -1,0 +1,587 @@
+// Lumticket — Prisma schema
+// Models the conceptual data model in SRS Section 5 (Core Entities).
+// Physical schema / multi-tenancy simplifications from the diagram are
+// documented in docs/DATA_MODEL.md.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum TenantType {
+  BUS
+  COURIER
+  EVENT
+  RETAIL
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  INACTIVE
+}
+
+enum VerificationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  RE_VERIFICATION_REQUIRED
+}
+
+enum RiskTier {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum Role {
+  ADMINISTRATOR
+  OPERATIONS_MANAGER
+  BOOKING_OFFICER
+  FINANCE_OFFICER
+  DISPATCHER
+  CUSTOMER_SUPPORT
+  TICKET_INSPECTOR
+  RETAIL_POS_AGENT
+  DRIVER
+  KYC_REVIEWER
+  CUSTOMER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum VehicleType {
+  BUS
+  VAN
+  MOTORCYCLE
+  BIKE
+  OTHER
+}
+
+enum VehicleStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum DriverStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TripStatus {
+  SCHEDULED
+  CANCELLED
+  COMPLETED
+}
+
+enum SeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  CLOSED
+}
+
+enum ParcelStatus {
+  REGISTERED
+  COLLECTED
+  IN_TRANSIT
+  SORTING
+  OUT_FOR_DELIVERY
+  DELIVERED
+  FAILED
+}
+
+enum PaymentStatus {
+  INITIATED
+  SUCCESSFUL
+  FAILED
+  REFUNDED
+}
+
+enum ValidationResult {
+  VALID
+  INVALID
+  FAILED
+}
+
+enum ValidationMode {
+  AUTO
+  MANUAL
+}
+
+enum TicketOrParcelType {
+  TICKET
+  PARCEL
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum LicenseStatus {
+  ACTIVE
+  EXPIRED
+  SUSPENDED
+}
+
+// ---------------------------------------------------------------------------
+// Tenant / Operator (Bus, Courier, Event, Retail — discriminated by `type`)
+// ---------------------------------------------------------------------------
+
+model Tenant {
+  id               String       @id @default(uuid())
+  type             TenantType
+  legalName        String       @map("legal_name")
+  country          String
+  commissionConfig Json?        @map("commission_config")
+  status           TenantStatus @default(ACTIVE)
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  kycVerification KycVerification?
+  users           User[]
+  vehicles        Vehicle[]
+  drivers         Driver[]
+  trips           RouteTrip[]
+  courierLicenses CourierLicense[]
+  events          Event[]
+  eventApprovals  EventApproval[]
+
+  @@map("tenants")
+}
+
+// ---------------------------------------------------------------------------
+// KYC / Onboarding (Section 6, FR-25..FR-32)
+// ---------------------------------------------------------------------------
+
+model KycVerification {
+  id                 String             @id @default(uuid())
+  tenantId           String             @unique @map("tenant_id")
+  accountType        TenantType         @map("account_type")
+  legalName          String             @map("legal_name")
+  idDocumentRef      String?            @map("id_document_ref")
+  businessRegRef     String?            @map("business_reg_ref")
+  tpinRef            String?            @map("tpin_ref")
+  bankAccountRef     String?            @map("bank_account_ref")
+  mobileMoneyRef     String?            @map("mobile_money_ref")
+  verificationStatus VerificationStatus @default(PENDING) @map("verification_status")
+  riskTier           RiskTier           @default(MEDIUM) @map("risk_tier")
+  verifiedById       String?            @map("verified_by")
+  verifiedAt         DateTime?          @map("verified_at")
+  reVerificationDue  DateTime?          @map("re_verification_due")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  tenant     Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  verifiedBy User?         @relation("KycVerifiedBy", fields: [verifiedById], references: [id])
+  documents  KycDocument[]
+  auditLogs  KycAuditLog[]
+
+  @@map("kyc_verifications")
+}
+
+// FR-26: role-specific document capture with per-document verification status
+model KycDocument {
+  id                String             @id @default(uuid())
+  kycVerificationId String             @map("kyc_verification_id")
+  documentType      String             @map("document_type")
+  documentRef       String             @map("document_ref")
+  expiryDate        DateTime?          @map("expiry_date")
+  status            VerificationStatus @default(PENDING)
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  kycVerification KycVerification @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+
+  @@map("kyc_documents")
+}
+
+// FR-31: audit trail of verification decisions (status, reviewer, timestamp)
+model KycAuditLog {
+  id                String             @id @default(uuid())
+  kycVerificationId String             @map("kyc_verification_id")
+  status            VerificationStatus
+  reviewerId        String?            @map("reviewer_id")
+  notes             String?
+  createdAt         DateTime           @default(now()) @map("created_at")
+
+  kycVerification KycVerification @relation(fields: [kycVerificationId], references: [id], onDelete: Cascade)
+  reviewer        User?           @relation("KycAuditReviewer", fields: [reviewerId], references: [id])
+
+  @@map("kyc_audit_logs")
+}
+
+// Courier-specific license tracking (Section 6.2, FR-28)
+model CourierLicense {
+  id               String        @id @default(uuid())
+  operatorId       String        @map("operator_id")
+  licenseType      String        @map("license_type") // domestic / inter-city / international
+  licenseNumber    String        @map("license_number")
+  issuingAuthority String        @map("issuing_authority") // e.g. MACRA
+  expiryDate       DateTime      @map("expiry_date")
+  status           LicenseStatus @default(ACTIVE)
+
+  operator Tenant @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+
+  @@map("courier_licenses")
+}
+
+// Per-event venue/permit approval, distinct from organizer-level KYC (FR-32)
+model EventApproval {
+  id             String         @id @default(uuid())
+  organizerId    String         @map("organizer_id")
+  eventId        String         @map("event_id")
+  venueLetterRef String?        @map("venue_letter_ref")
+  permitRef      String?        @map("permit_ref")
+  approvalStatus ApprovalStatus @default(PENDING) @map("approval_status")
+  approvedById   String?        @map("approved_by")
+  approvedAt     DateTime?      @map("approved_at")
+
+  organizer Tenant @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  event     Event  @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  approver  User?  @relation("EventApprover", fields: [approvedById], references: [id])
+
+  @@map("event_approvals")
+}
+
+// ---------------------------------------------------------------------------
+// User / Actor (staff accounts — individually attributable, FR-30)
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String     @id @default(uuid())
+  role         Role
+  tenantId     String?    @map("tenant_id")
+  name         String
+  email        String     @unique
+  phone        String?
+  passwordHash String?    @map("password_hash")
+  authProvider String     @default("credentials") @map("auth_provider")
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now()) @map("created_at")
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id])
+
+  customer           Customer?
+  driver              Driver?
+  kycVerifications   KycVerification[] @relation("KycVerifiedBy")
+  kycAuditLogs       KycAuditLog[]     @relation("KycAuditReviewer")
+  eventApprovals     EventApproval[]   @relation("EventApprover")
+  validationLogs     ValidationLog[]
+  parcelHandlingLogs ParcelHandlingLog[]
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Customer
+// ---------------------------------------------------------------------------
+
+model Customer {
+  id         String   @id @default(uuid())
+  userId     String?  @unique @map("user_id")
+  fullName   String   @map("full_name")
+  email      String?
+  phone      String?
+  nationalId String?  @map("national_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user     User?     @relation(fields: [userId], references: [id])
+  bookings Booking[]
+  parcels  Parcel[]
+
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Fleet: Vehicle, Driver, Route/Trip, Seat
+// ---------------------------------------------------------------------------
+
+model Vehicle {
+  id                 String        @id @default(uuid())
+  operatorId         String        @map("operator_id")
+  registrationNumber String        @unique @map("registration_number")
+  type               VehicleType
+  capacity           Int?
+  roadworthyExpiry   DateTime?     @map("roadworthy_expiry")
+  gitInsuranceRef    String?       @map("git_insurance_ref")
+  status             VehicleStatus @default(ACTIVE)
+
+  operator Tenant      @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  trips    RouteTrip[]
+
+  @@map("vehicles")
+}
+
+model Driver {
+  id            String       @id @default(uuid())
+  operatorId    String       @map("operator_id")
+  userId        String?      @unique @map("user_id")
+  licenseNumber String       @map("license_number")
+  licenseExpiry DateTime     @map("license_expiry")
+  idDocumentRef String?      @map("id_document_ref")
+  status        DriverStatus @default(ACTIVE)
+
+  operator         Tenant      @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  user             User?       @relation(fields: [userId], references: [id])
+  trips            RouteTrip[]
+  parcelsCouriered Parcel[]
+
+  @@map("drivers")
+}
+
+model RouteTrip {
+  id               String     @id @default(uuid())
+  operatorId       String     @map("operator_id")
+  origin           String
+  destination      String
+  scheduleDatetime DateTime   @map("schedule_datetime")
+  price            Decimal    @db.Decimal(12, 2)
+  seatHoldMinutes  Int        @default(5) @map("seat_hold_minutes") // FR-21: configurable per operator/trip
+  vehicleId        String?    @map("vehicle_id")
+  driverId         String?    @map("driver_id")
+  status           TripStatus @default(SCHEDULED)
+
+  operator Tenant    @relation(fields: [operatorId], references: [id], onDelete: Cascade)
+  vehicle  Vehicle?  @relation(fields: [vehicleId], references: [id])
+  driver   Driver?   @relation(fields: [driverId], references: [id])
+  seats    Seat[]
+  bookings Booking[]
+
+  @@map("route_trips")
+}
+
+// FR-21 / FR-22: time-bound seat holds
+model Seat {
+  id            String     @id @default(uuid())
+  tripId        String     @map("trip_id")
+  seatNo        String     @map("seat_no")
+  status        SeatStatus @default(AVAILABLE)
+  holdExpiresAt DateTime?  @map("hold_expires_at")
+
+  trip         RouteTrip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  bookingSeats BookingSeat[]
+
+  @@unique([tripId, seatNo])
+  @@map("seats")
+}
+
+// ---------------------------------------------------------------------------
+// Event / TicketType
+// ---------------------------------------------------------------------------
+
+model Event {
+  id          String      @id @default(uuid())
+  organizerId String      @map("organizer_id")
+  name        String
+  venue       String
+  eventDate   DateTime    @map("event_date")
+  capacity    Int?
+  status      EventStatus @default(DRAFT)
+
+  organizer   Tenant          @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  ticketTypes TicketType[]
+  approvals   EventApproval[]
+  bookings    Booking[]
+
+  @@map("events")
+}
+
+model TicketType {
+  id           String  @id @default(uuid())
+  eventId      String  @map("event_id")
+  name         String
+  price        Decimal @db.Decimal(12, 2)
+  quantity     Int
+  quantitySold Int     @default(0) @map("quantity_sold")
+
+  event             Event               @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  bookingSelections BookingTicketType[]
+
+  @@map("ticket_types")
+}
+
+// ---------------------------------------------------------------------------
+// Booking (bus seat bookings and/or event ticket bookings)
+// ---------------------------------------------------------------------------
+
+model Booking {
+  id             String        @id @default(uuid())
+  customerId     String        @map("customer_id")
+  tripId         String?       @map("trip_id")
+  eventId        String?       @map("event_id")
+  bookingRef     String        @unique @map("booking_ref")
+  status         BookingStatus @default(PENDING)
+  qrCode         String?       @map("qr_code")
+  idempotencyKey String?       @unique @map("idempotency_key")
+  bookedAt       DateTime      @default(now()) @map("booked_at")
+
+  customer         Customer            @relation(fields: [customerId], references: [id])
+  trip             RouteTrip?          @relation(fields: [tripId], references: [id])
+  event            Event?              @relation(fields: [eventId], references: [id])
+  seats            BookingSeat[]
+  ticketSelections BookingTicketType[]
+  payment          PaymentSettlement?
+  validationLogs   ValidationLog[]
+
+  @@map("bookings")
+}
+
+model BookingSeat {
+  id        String @id @default(uuid())
+  bookingId String @map("booking_id")
+  seatId    String @map("seat_id")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  seat    Seat    @relation(fields: [seatId], references: [id])
+
+  @@unique([bookingId, seatId])
+  @@map("booking_seats")
+}
+
+model BookingTicketType {
+  id           String @id @default(uuid())
+  bookingId    String @map("booking_id")
+  ticketTypeId String @map("ticket_type_id")
+  quantity     Int
+
+  booking    Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id])
+
+  @@unique([bookingId, ticketTypeId])
+  @@map("booking_ticket_types")
+}
+
+// ---------------------------------------------------------------------------
+// Parcel Logistics
+// ---------------------------------------------------------------------------
+
+model Parcel {
+  id               String       @id @default(uuid())
+  senderId         String       @map("sender_id")
+  recipientName    String       @map("recipient_name")
+  recipientPhone   String       @map("recipient_phone")
+  pickupLocation   String       @map("pickup_location")
+  deliveryLocation String       @map("delivery_location")
+  status           ParcelStatus @default(REGISTERED)
+  courierId        String?      @map("courier_id")
+  weight           Decimal?     @db.Decimal(10, 2)
+  createdAt        DateTime     @default(now()) @map("created_at")
+
+  sender         Customer            @relation(fields: [senderId], references: [id])
+  courier        Driver?             @relation(fields: [courierId], references: [id])
+  handlingLogs   ParcelHandlingLog[]
+  validationLogs ValidationLog[]
+
+  @@map("parcels")
+}
+
+// FR-06, FR-07: status history through each handling stage
+model ParcelHandlingLog {
+  id        String       @id @default(uuid())
+  parcelId  String       @map("parcel_id")
+  actorId   String       @map("actor_id")
+  status    ParcelStatus
+  location  String?
+  notes     String?
+  timestamp DateTime     @default(now())
+
+  parcel Parcel @relation(fields: [parcelId], references: [id], onDelete: Cascade)
+  actor  User   @relation(fields: [actorId], references: [id])
+
+  @@map("parcel_handling_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Payments and Settlement (FR-11..FR-14, FR-23, FR-24)
+// ---------------------------------------------------------------------------
+
+model PaymentSettlement {
+  id             String        @id @default(uuid())
+  bookingId      String        @unique @map("booking_id")
+  gatewayRef     String?       @map("gateway_ref")
+  amount         Decimal       @db.Decimal(12, 2)
+  currency       String        @default("MWK")
+  splitBreakdown Json?         @map("split_breakdown") // { operator, agent, platform, gatewayFees }
+  status         PaymentStatus @default(INITIATED)
+  paidAt         DateTime?     @map("paid_at")
+
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@map("payment_settlements")
+}
+
+// FR-24: gateway confirmed a payment but the booking/payment record is
+// missing or out of sync — logged by the reconciliation job for review.
+model PaymentReconciliationIncident {
+  id         String    @id @default(uuid())
+  bookingId  String?   @map("booking_id")
+  gatewayRef String    @map("gateway_ref")
+  amount     Decimal   @db.Decimal(12, 2)
+  reason     String
+  resolution String? // e.g. "booking_completed" | "auto_refunded"
+  resolvedAt DateTime? @map("resolved_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@map("payment_reconciliation_incidents")
+}
+
+// Generic idempotency store for booking-and-payment endpoints (FR-23, API-03)
+model IdempotencyKey {
+  id           String   @id @default(uuid())
+  key          String   @unique
+  endpoint     String
+  requestHash  String?  @map("request_hash")
+  responseBody Json?    @map("response_body")
+  statusCode   Int?     @map("status_code")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("idempotency_keys")
+}
+
+// ---------------------------------------------------------------------------
+// Validation / Scanning (FR-08, FR-09, FR-10, NFR-05, NFR-OF1..OF3)
+// ---------------------------------------------------------------------------
+
+model ValidationLog {
+  id                 String             @id @default(uuid())
+  ticketOrParcelType TicketOrParcelType @map("ticket_or_parcel_type")
+  bookingId          String?            @map("booking_id")
+  parcelId           String?            @map("parcel_id")
+  actorId            String             @map("actor_id")
+  result             ValidationResult
+  mode               ValidationMode     @default(AUTO)
+  deviceId           String?            @map("device_id")
+  reconciledAt       DateTime?          @map("reconciled_at")
+  createdAt          DateTime           @default(now()) @map("created_at")
+
+  booking Booking? @relation(fields: [bookingId], references: [id])
+  parcel  Parcel?  @relation(fields: [parcelId], references: [id])
+  actor   User     @relation(fields: [actorId], references: [id])
+
+  @@map("validation_logs")
+}
