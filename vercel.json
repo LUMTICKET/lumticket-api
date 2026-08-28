@@ -1,0 +1,5 @@
+{
+  "buildCommand": "prisma generate && tsc && prisma db seed",
+  "installCommand": "npm install",
+  "framework": null
+}
